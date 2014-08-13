@@ -12,37 +12,46 @@ DOUBLE PRECISION, PARAMETER :: eps = 1d-10
 		DOUBLE PRECISION :: z
 	end type
 	type(node),allocatable :: polymer_A(:)  
-        type(node),allocatable :: polymer_B(:)
 
 Integer :: Nm
 Integer :: Nz, Ntheta, Nphi,N_point
 Integer :: Movestep    !each MC attempt move
 Integer :: num,w_init,E_iter
-Double Precision :: rotate,zave,zaveA,zaveB,phizuniform,phizuniformA,phizuniformB,zendA,zendB
-Double PRECISION :: P1A,P2A,zendAtot,zendBtot,p1B,p2B
+Double Precision :: rotate,zave,zaveA,phizuniform,phizuniformA,zendA
+Double PRECISION :: P1A,P2A,zendAtot,p1B
 Double PRECISION :: P1cosA,p1cosAtot,p2cosA,p2cosAtot
 Double PRECISION :: P1phiA,p1phiAtot,p2phiA,p2phiAtot
-Double PRECISION :: avaphiA,avaphiAtot,avaphiB,avaphiBtot
+Double PRECISION :: avaphiA,avaphiAtot
 Double PRECISION :: sinegmma,I1A,I2A,I3A,I1Atot,I2Atot,I3Atot,op1,op2,op_phi,P2_phi
-Double PRECISION :: I1B,I2B,I3B,I1Btot,I2Btot,I3Btot
 Double PRECISION :: IIx,IIy
 Double Precision :: pivota,smalla
 Integer, DIMENSION(:), ALLOCATABLE :: izA, iTA,iPA
-Integer, DIMENSION(:), ALLOCATABLE :: izB, iTB,iPB
+# if defined (PHI)
 DOUBLE PRECISION, DIMENSION(:,:,:), ALLOCATABLE :: w
 DOUBLE PRECISION, DIMENSION(:,:,:), ALLOCATABLE :: sinegmma_matrix
 INTEGER(KIND=4), DIMENSION(:,:,:), ALLOCATABLE :: density_index
+DOUBLE PRECISION, DIMENSION(:,:,:), ALLOCATABLE :: density
+DOUBLE PRECISION, DIMENSION(:,:,:), ALLOCATABLE :: w_new
+DOUBLE PRECISION, DIMENSION(:,:,:), ALLOCATABLE :: wtotmpi!  w,and wtot for MPI Reduce
+DOUBLE PRECISION,  DIMENSION(:,:,:), ALLOCATABLE :: densitytotmpi!density, for MPI Reduce
+# else /* PHI */
+DOUBLE PRECISION, DIMENSION(:,:), ALLOCATABLE :: w
+DOUBLE PRECISION, DIMENSION(:,:,:), ALLOCATABLE :: sinegmma_matrix
+DOUBLE PRECISION, DIMENSION(:,:), ALLOCATABLE :: v_tt
+INTEGER(KIND=4), DIMENSION(:,:), ALLOCATABLE :: density_index
+DOUBLE PRECISION, DIMENSION(:,:), ALLOCATABLE :: density
+DOUBLE PRECISION, DIMENSION(:,:), ALLOCATABLE :: w_new
+DOUBLE PRECISION, DIMENSION(:,:), ALLOCATABLE :: wtotmpi!  w,and wtot for MPI Reduce
+DOUBLE PRECISION,  DIMENSION(:,:), ALLOCATABLE :: densitytotmpi!density, for MPI Reduce
+# endif /* PHI */
+
 INTEGER(KIND=4), DIMENSION(:), ALLOCATABLE :: u_index
 REAL, DIMENSION(:), ALLOCATABLE :: i_rotate
 DOUBLE PRECISION :: avarotate
-DOUBLE PRECISION, DIMENSION(:,:,:), ALLOCATABLE :: density
 Double PRECISION :: lx,ly,Lz,dep,Ur
 DOUBLE PRECISION, DIMENSION(:), ALLOCATABLE :: dz
 DOUBLE PRECISION, DIMENSION(:), ALLOCATABLE :: phi_zA
 DOUBLE PRECISION, DIMENSION(:), ALLOCATABLE :: phi_zAtot
-
-DOUBLE PRECISION, DIMENSION(:), ALLOCATABLE :: phi_zB
-DOUBLE PRECISION, DIMENSION(:), ALLOCATABLE :: phi_zBtot
 
 DOUBLE PRECISION, DIMENSION(:), ALLOCATABLE :: phi_z
 DOUBLE PRECISION, DIMENSION(:), ALLOCATABLE :: phi_ztot
@@ -54,20 +63,13 @@ REAL, DIMENSION(:), ALLOCATABLE :: z_i,t_i,p_i
 REAL, DIMENSION(:), ALLOCATABLE :: P_z
 REAL*8 :: dz_inv,Lz_inv,dtheta_inv,dphi_inv
 !******************
-DOUBLE PRECISION, DIMENSION(:,:,:), ALLOCATABLE :: w_new
-DOUBLE PRECISION, DIMENSION(:,:,:), ALLOCATABLE :: wtotmpi!  w,and wtot for MPI Reduce
-DOUBLE PRECISION,  DIMENSION(:,:,:), ALLOCATABLE :: densitytotmpi!density, for MPI Reduce
 DOUBLE PRECISION, DIMENSION(:), ALLOCATABLE :: gzA,gzAtot
-DOUBLE PRECISION, DIMENSION(:), ALLOCATABLE :: gzB,gzBtot
 DOUBLE PRECISION, DIMENSION(:), ALLOCATABLE :: cosa1,cosa2,sina1
 DOUBLE PRECISION :: nu, epsilon,Loa, dtheta, dphi,E_total, DE1, DE2,deltaS,lambda
 DOUBLE PRECISION :: E_bend,E_onsager,E_ava,E_bend_ava,E_onsager_ava
 DOUBLE PRECISION ,DIMENSION(:),ALLOCATABLE ::  Etot
 Integer :: n_iter, Max_iter, N_pre, Npre, Nmove, moves,ncount, NMCs,NMCstot, MCS
-!integer,parameter :: ANDERSON_NIM=4
-!integer,parameter :: SIMPLE_MIXING_STEP=20
 integer :: SIMPLE_MIXING_STEP
-!DOUBLE PRECISION,parameter :: LAMBDA_A=0.1
 integer :: ANDERSON_NIM
 DOUBLE PRECISION :: LAMBDA_A
 
@@ -102,9 +104,3 @@ END MODULE global_parameters
   include 'mpif.h'
   end module mpi
 
-  !module cpuids
-  !use mpi
- !integer::myid,nprocs, ierr
- !integer ( kind = 4 ) status(MPI_STATUS_SIZE)
- 
-! end module cpuids

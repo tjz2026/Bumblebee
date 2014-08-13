@@ -39,7 +39,7 @@ logical alive,check,exists
  call date_and_time(values=dt)
  seed=(dt(8)-500)*654321*(myid+1) + 88888*myid
 
-do i=1,1000
+do i=1,5000
  random=ran2(seed)
  random=ran2(seed)
  random=ran2(seed)
@@ -55,30 +55,28 @@ enddo
          if ( exists .eqv. .true. ) then
       open(unit=mytmp,file='input.txt')
 read(mytmp,*) Loa             ! L/a
-read(mytmp,*) lambda          ! mixing parameter
+read(mytmp,*) nu              ! interaction parameter
+read(mytmp,*) Lz              ! the size of the slab
 read(mytmp,*) Nm              ! number of bonds
+read(mytmp,*) N_i              ! number index of the chosen segment
 read(mytmp,*) NMCs            ! number of conformations  
 read(mytmp,*) Nz              ! number of points in z direction
 read(mytmp,*) Ntheta          ! number of points in theta direction 
+# if defined (PHI)
 read(mytmp,*) Nphi          ! number of points in phi direction 
+# endif /* PHI */
 read(mytmp,*) Npre            ! number of prerotated   
 read(mytmp,*) Nmove           ! number of move in a MC step 
 read(mytmp,*) Max_iter        ! Max of iterations
 read(mytmp,*) SIMPLE_MIXING_STEP       ! simple_mixing_step
 read(mytmp,*) anderson_nim     !
+read(mytmp,*) lambda          ! mixing parameter
 read(mytmp,*) lambda_a     !
 read(mytmp,*) pivota             !pivot percentage
 read(mytmp,*) smalla             !small roatae percentage = smalla-pivota
 read(mytmp,*) w_init          !integer varibale,0 for no initial field,1 for an initial field
 read(mytmp,*) rotate          !the limitation of the random move angle 
-!read(mytmp,*) Lz              ! the size of the slab
-!read(mytmp,*) Loa             ! L/a
-read(mytmp,*) nu              ! interaction parameter
-read(mytmp,*) Lz              ! the size of the slab
 close(mytmp)
-
-
-
 
       else 
       write(mystd,*) "input file missing ,program stop!"
@@ -98,6 +96,7 @@ endif  !endif myid==master
       call mp_bcast( Loa, master )                                     !
       call mp_bcast( lambda , master )                                     !
       call mp_bcast( Nm , master )   
+      call mp_bcast( N_i , master )   
       call mp_bcast( NMCs , master ) 
       call mp_bcast( Nz , master ) 
       call mp_bcast( Ntheta, master ) 
@@ -123,16 +122,13 @@ endif  !endif myid==master
 
 
 
-
-
 epsilon = 1.0d0*Nm/(4.0d0*Loa)    ! compute bending coefficent of chain
 dtheta = pi / Ntheta
 dphi=2*pi/Nphi
-
 deltaS=1.0d0*Loa/Nm
 
 
-
+# if defined (PHI)
 allocate(polymer_A(0:Nm),w(1:Ntheta,1:Nphi,0:Nz), w_new(1:Ntheta,1:Nphi,0:Nz))
 !note that the the polymer chain is grafted on the surface ,thus the first index of izA,.. 
 !is integer 1 instead of 0,remember that when dealing with different problem!!!!!
@@ -146,7 +142,6 @@ allocate(cosa1(1:Ntheta),sina1(1:Ntheta),cosa2(0:Nphi/2))
 allocate( sinegmma_matrix(1:Ntheta,1:Ntheta,0:Nphi/2) )
 allocate( density_index(0:Nz,1:Nphi,1:Ntheta) )
 allocate( density(0:Nz,1:Nphi,1:Ntheta) )
-allocate( Etot(1:Npre) )
 allocate( uu(1:Nm) )
 allocate( uu_tot(1:Nm) )
 allocate( P_theta(1:Ntheta) )
@@ -155,11 +150,8 @@ allocate( hisgphi(1:Nphi) )
 allocate( hisgtheta(1:Ntheta) )
 allocate( hisgphi_tot(1:Nphi) )
 allocate( hisgtheta_tot(1:Ntheta) )
-
 allocate(  z_i(0:nz) )
-
 allocate(  P_z(1:Nm) )
-
 ! new order para
 allocate(  s_nA_bond(1:3,1:3,1:Nm) )
 allocate(  s_phi_bond(1:2,1:2,1:Nm) )
@@ -169,7 +161,40 @@ allocate(  cosp1_bond_tot(1:Nm) )
 allocate(  cosp2_bond_tot(1:Nm) )
 allocate(  P1A_bond(1:Nm) )
 allocate(  P2A_bond(1:Nm) )
-allocate(  P2_phi_bond(1:Nm) )
+
+# else /* PHI */
+allocate(polymer_A(0:Nm),w(1:Ntheta,0:Nz), w_new(1:Ntheta,0:Nz))
+!note that the the polymer chain is grafted on the surface ,thus the first index of izA,.. 
+!is integer 1 instead of 0,remember that when dealing with different problem!!!!!
+allocate( dz(0:nz), phi_z(0:nz),phi_ztot(0:nz), izA(1:Nm), iTA(1:Nm) )
+allocate(u_index(0:Nm),i_rotate(0:Nm))
+allocate(  phi_zA(0:nz),phi_zAtot(0:nz) )
+allocate(wtotmpi(1:Ntheta,0:Nz))
+allocate(densitytotmpi(0:Nz,1:Ntheta))
+allocate( gzA(0:nz),gzAtot(0:nz) )
+allocate(cosa1(1:Ntheta),sina1(1:Ntheta),cosa2(0:Nphi/2))
+allocate( sinegmma_matrix(1:Ntheta,1:Ntheta,0:Nphi/2) )
+allocate( v_tt(1:Ntheta,1:Ntheta) )
+allocate( density_index(0:Nz,1:Ntheta) )
+allocate( density(0:Nz,1:Ntheta) )
+allocate( uu(1:Nm) )
+allocate( uu_tot(1:Nm) )
+allocate( P_theta(1:Ntheta) )
+allocate( hisgtheta(1:Ntheta) )
+allocate( hisgtheta_tot(1:Ntheta) )
+allocate(  z_i(0:nz) )
+allocate(  P_z(1:Nm) )
+! new order para
+allocate(  s_nA_bond(1:3,1:3,1:Nm) )
+allocate(  s_phi_bond(1:2,1:2,1:Nm) )
+allocate(  cosp1_bond(1:Nm) )
+allocate(  cosp2_bond(1:Nm) )
+allocate(  cosp1_bond_tot(1:Nm) )
+allocate(  cosp2_bond_tot(1:Nm) )
+allocate(  P1A_bond(1:Nm) )
+allocate(  P2A_bond(1:Nm) )
+#endif /* PHI */
+
 w = 0
 w_new = 0
 wtotmpi= 0
@@ -179,47 +204,26 @@ i_rotate=1.0
 do i = 0, Nz
     !set kuhn length a as unit length,thus the z axis length is N=Loa 
     dz(i) = fn(1.0d0*i/Nz)*Lz - fn(1.0d0*(i-1)/Nz)*Lz
-
-    !if(fn(1.0d0*i/Nz)*Lz<dep*Lz)then
-     ! uz(i)=-1.0d0*Ur
-    !else
-     ! uz(i)=0.0
-    !endif
-   z_i(i)=i*dz(i)
-
+    z_i(i)=i*dz(i)
 end do
 
  dz_inv=1.0d0/z_i(1)
  Lz_inv=1.0d0/Lz
  dtheta_inv=1.0d0/dtheta
  dphi_inv=1.0d0/dphi
- 
-
  write(*,*) "myid,seed,ran2(seed)", myid, seed ,ran2(seed)
  
-            
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 !    initialize
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!a
-
-
-
-
-
-
         
+# if defined (PHI)
       call  cos_sin(sinegmma_matrix,Ntheta,Nphi,dtheta,dphi,deltaS,dz(1))
-    ! open(unit=33,file='cosa.txt',status='old')
-     ! do i=1,Ntheta
-      !    read(33,*) cosa1(i)
-     ! enddo
-      !do i=1,Ntheta
-       !   read(33,*) sina1(i)
-      !enddo
-      !do i=0,Nphi-1
-       !   read(33,*) cosa2(i)
-      !enddo
-      !close(33)
+# else /* PHI */
+      call  cos_sin(sinegmma_matrix,Ntheta,Nphi,dtheta,dphi,deltaS,dz(1))
+      call v_tt_init(Ntheta)
+
+# endif /* PHI */
 
 res0=achar(48+myid)
  inquire(file=res0 // 'last_conf.txt',exist=alive)
