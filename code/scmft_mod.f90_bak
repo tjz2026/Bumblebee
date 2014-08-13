@@ -1,0 +1,425 @@
+subroutine SCMFT()
+ USE global_parameters
+ USE mpi
+ USE constants
+ use control
+ use mmpi
+ USE utility_routines    
+
+ implicit none
+
+Integer ::  pointor, flag_c, izA_temp,izB_temp
+Integer ::  kphiA_M,kphiB_M
+Integer :: i, j, k,i_temp, is,ii,NN,jj,iz1,N_pr1,N_pr2,n_iter0,iTA_temp,iPA_temp
+Integer :: iTB_temp,iPB_temp,kphiA,kphiB,NMCS_input
+integer :: changeA,changeB  ! change is the flag of MC, 1 for accepte the move.
+integer :: dt(8) 
+DOUBLE PRECISION, PARAMETER :: TOL = 1.0D-5	
+DOUBLE PRECISION ::  w_erro, w_erromax,lambda2 
+DOUBLE PRECISION ::  w_norm,w_errorelative,ap1,ap2,scal,random,r
+!DOUBLE PRECISION ::  Etot(1:Npre)
+!!! iteration
+
+ 
+    !call cpu_time(time1)
+ !!open a new file for the output of werror  
+  if(myid==0) then
+   call werro_dump_init()
+  endif
+
+NMCs_input=NMCs
+  
+do n_iter = 1, Max_iter
+
+
+
+    ! pre-move
+    N_pre = 0
+    !E_iter=1
+    !avaEn=0.0
+    !ncount = 0
+    Movestep=1
+!!!!!before iteration ,a preproduction is performed in order to calculate the
+!!accept ratio ap
+        N_pr1=0
+        N_pr2=0
+        ap1=0.0
+        ap2=0.0
+        do n_iter0=1,10000
+           call pivot(polymer_A,iTA,iPA,izA,changeA)
+           
+           !call checkpolymer (flag_c)
+           if(changeA==1)then
+               N_pr1=N_pr1+1
+            endif
+      enddo   
+ 
+         ap1=1.0d0*N_pr1/10000
+      !write(*,*) "ap=",ap
+      !if(ap<0.50)then
+              if(myid==master) then
+              open(unit=67,file=res0 // 'acp.txt',position='append')
+              write(67,*) "ap1=",ap1,"on",n_iter,"rotate",rotate
+              close(67)
+              endif
+
+             if((ap1)<0.45)then
+             rotate=max(rotate*0.85,0.05)
+             else if((ap1)>0.55)then
+             rotate=min(rotate*1.15,1.5)
+             else 
+             rotate=rotate        
+             endif 
+             do i=0,Nm
+              i_rotate(i)=rotate*0.7+0.6*rotate*(i*1.0/Nm -0.5) 
+             enddo
+
+!regrow the whole chain before each iteration begins
+
+           call regrow()
+
+     !  call cpu_time(time2)
+
+    u_index=0
+    avarotate=0.0
+    Etot=0.0
+    
+
+    do while(N_pre < Npre) 
+        Movestep=Movestep+1     
+        !ncount = ncount + 1
+           !r=ran2(seed)
+          ! if(r<=pivota) then
+           call pivot(polymer_A,iTA,iPA,izA,changeA)
+           !else if(r<=smalla) then
+           !call smallrotate(polymer_A,iTA,iPA,izA,changeA)
+           !else
+           !call cranksharft(polymer_A,iTA,iPA,izA,changeA)
+           !endif
+        !call checkpolymer (flag_c)
+        if(changeA == 1)then
+            N_pre = 1 + N_pre 
+
+           Etot(N_pre)=E_total         
+        end if    
+    end do   
+
+   
+
+    print*, "after pre", N_Pre
+    if(myid==0) then
+    call pre_adjust()
+    endif
+    ! update the self consistent field 
+    call w_update()
+   
+    w_erro = 0.0
+    w_norm=0.0
+    w_erromax=0.0
+    w_errorelative=0.0
+    jj=0
+    do j = 1, Nz
+       do k=1,Nphi
+           do i = 1, Ntheta
+            
+            w_erro = w_erro + abs(w_new(i,k,j) - w(i,k,j))
+            w_norm=w_norm+abs(w_new(i,k,j))
+            if(abs(w_new(i,k,j) - w(i,k,j)).gt.w_erromax)then
+              w_erromax=abs(w_new(i,k,j) - w(i,k,j))
+               jj=(j-1)*Ntheta*Nphi+(k-1)*Ntheta+i
+             endif
+            
+      !   write(*,*) "w_erro",w_erro,jj,i,k,j
+        end do
+    end do
+   enddo
+     !write(*,*) "werro done",n_iter
+     !write(*,*) "werromax",w_erromax
+     !write(*,*) "w_erro",w_erro
+    w_errorelative=w_erro/w_norm
+    w_erro = w_erro/Nz/Ntheta/Nphi
+
+    !print*, n_iter, w_erro
+
+!    stop "OK"
+
+   if(myid==0) then
+    call werro_dump(w_erro,w_errorelative,w_erromax,jj)
+   endif
+  
+
+    if (w_erro<TOL) then
+        exit
+    end if
+
+    if (w_errorelative<0.1) then
+
+       NMCS=NMCS_input*3
+    else if(w_errorelative<0.02) then
+    
+       NMCS=NMCS_input*6
+    end if
+     
+    !if(n_iter==1) then
+    !w=w_new
+    !else
+    w = lambda*w_new + (1-lambda)*w
+    !endif
+
+  if(mod(n_iter,30)==0) then
+    call wfield_dump()
+   call MCstatistics()
+  endif
+
+
+
+end do  ! enddo n_iter
+
+
+if(myid==0) then
+call wfield_dump()
+endif
+
+
+print*, "OK iteration"
+
+if(myid==0) then
+call sava_config()
+endif
+
+end subroutine SCMFT
+
+
+subroutine sava_config()
+ USE global_parameters
+ USE constants
+ implicit none
+ integer j
+ open(unit=44,file='last_config.txt',status='replace')
+ do j=0,Nm
+  write(44,*) polymer_A(j)%x,polymer_A(j)%y,polymer_A(j)%z
+ enddo
+close(44)
+
+end subroutine sava_config
+   
+
+
+subroutine pre_adjust()
+ USE global_parameters
+ USE mpi
+ USE constants
+ use control
+ use mmpi
+ USE utility_routines    
+
+ implicit none
+ integer k,j,n
+ DOUBLE PRECISION :: avaEn
+DOUBLE PRECISION ,DIMENSION(:),ALLOCATABLE ::  avaEnk
+ n=Nint(Npre/1000.0)
+
+ allocate(avaEnk(1:n))
+
+ avaEn=0.0
+ do k=1,n
+    avaEnk(k)=0.0
+    do j=1,1000
+      avaEnk(k)=avaEnk(k)+Etot((k-1)*1000+j)
+    enddo
+    avaEn=avaEn+avaEnk(k)
+ enddo
+
+   avaEnk=avaEnk/1000.0
+   avaEn=avaEn/Npre 
+
+  if(mod(n_iter,100)==0) then
+ call avaEn_dump(avaEnk,avaEn,n)
+ endif
+
+  avarotate=avarotate/(Npre*pivota)
+  !if necessary,add the code for automatically change the rotate para according to the
+  !u_index distribution. to be implemented later.
+
+  
+  
+  if(mod(n_iter,100)==0) then
+    call pre_dump()
+  endif
+ deallocate(avaEnk)
+
+end  subroutine pre_adjust
+ 
+
+  subroutine w_update()
+
+ USE global_parameters
+ USE mpi
+ USE constants
+ use control
+ use mmpi
+ USE utility_routines    
+ implicit none
+Integer :: i, j, k,dMCS
+integer :: a1,a2,a3
+Integer :: kphiA
+integer :: changeA,changeB  ! change is the flag of MC, 1 for accepte the move.
+real*8 :: r
+
+
+
+    !! find out w_new
+
+    w_new = 0.0     
+    MCS = 0
+    density=0.0
+    density_index=0
+    wtotmpi=0.0 
+    dMCS=floor(NMCs/100.0)
+
+    do while(MCS < NMCs)
+               
+        MCS = MCS + 1
+  
+        moves = 0
+        do while(moves < Nmove)              
+           Movestep=Movestep+1
+          ! r=ran2(seed)
+          ! if(r<=pivota) then
+           call pivot(polymer_A,iTA,iPA,izA,changeA)
+          ! else if(r<=smalla) then
+          ! call smallrotate(polymer_A,iTA,iPA,izA,changeA)
+          ! else
+          ! call cranksharft(polymer_A,iTA,iPA,izA,changeA)
+          ! endif  
+             if(changeA == 1)then
+            moves = 1 + moves         
+        end if  
+        end do
+
+      ! if(mod(MCS,dMCS)==0) then
+       ! call regrow()
+       !endif
+
+
+        do j=1,Nm
+
+    density_index(izA(j),iPA(j),iTA(j))=density_index(izA(j),iPA(j),iTA(j))+1
+       enddo
+
+     enddo !enddo while NMCs
+
+
+     density=density_index*deltaS
+
+   ! if MPI is used,then the w_new should be allreduced.   
+# if defined (MPI)
+
+    !do j=1,Ntheta
+     ! do k=1,Nphi
+     !do i=1,Nz
+     
+       ! densitympi((j-1)*Nz*Nphi+(k-1)*Nz+i)=density(i,k,j)
+        densitytotmpi=0.0
+     !enddo
+   !enddo   
+  !enddo
+
+    NMCstot=0
+   call mp_barrier()
+   call mp_allreduce(density,densitytotmpi)
+   call mp_allreduce(NMCs,NMCStot)
+   call mp_barrier()
+
+  density=densitytotmpi*nu/(NMCstot)
+
+   ! do j=1,Ntheta
+    !     do k=1,Nphi
+     !    do i=1,Nz
+     
+         !density(i,k,j)=densitytotmpi((j-1)*Nz*Nphi+(k-1)*Nz+i)
+        
+      ! enddo
+   ! enddo
+  ! enddo
+# else    /* MPI */
+density=density*nu/(NMCs)
+# endif  /* MPI */
+
+
+#if defined (Mirror_Symmetry)   
+        do j=1,Ntheta
+          do k=1,Nphi
+           do i=1,Nz
+
+         density(i,k,j)=0.5*(density(i,k,j)+density(i,Nphi-k+1,j))
+           enddo
+           enddo
+          enddo
+# endif  /* Mirror_Symmetry */
+       
+!!!note that the density array doesn't directly equivalent to the \phi(z,\phi,\theta) 
+!in fact,density()=sin(\theta)* dtheta* dphi*dz*\phi(z,\phi,\theta)
+     
+      
+# if defined (MPI)
+
+     do a1=(1+myid),Nz,nprocs
+
+       do a2=1,Nphi
+         do a3=1,Ntheta
+
+            do j=1,Ntheta
+               do k=1,Nphi
+             kphiA=abs(a2-k)
+             kphiA=min(Nphi-kphiA,kphiA)
+
+             w_new(a3,a2,a1)=w_new(a3,a2,a1)+sinegmma_matrix(a3,j,kphiA)*density(a1,k,j)
+
+               enddo
+            enddo
+
+          enddo
+        enddo
+      enddo
+
+   call mp_barrier()
+
+   call mp_allreduce(w_new,wtotmpi)
+   call mp_barrier()
+
+   w_new=wtotmpi
+
+
+
+
+
+# else    /* MPI */
+
+     do a1=1,Nz
+       do a2=1,Nphi
+         do a3=1,Ntheta
+
+            do j=1,Ntheta
+               do k=1,Nphi
+             kphiA=abs(a2-k)
+             kphiA=min(Nphi-kphiA,kphiA)
+
+             w_new(a3,a2,a1)=w_new(a3,a2,a1)+sinegmma_matrix(a3,j,kphiA)*density(a1,k,j)
+
+               enddo
+            enddo
+
+          enddo
+        enddo
+      enddo
+
+
+
+
+
+# endif   /* MPI */
+
+end subroutine w_update
+
+

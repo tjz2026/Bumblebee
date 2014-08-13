@@ -1,0 +1,344 @@
+ subroutine initialize()
+ USE global_parameters
+ USE mpi
+ USE control
+ USE constants
+ USE mmpi
+ USE utility_routines 
+
+ implicit none
+ Integer*8 npts,mynpts
+
+Integer ::  pointor, flag_c
+Integer :: i, j, k,i_temp, is,ii,NN,jj,iz1,N_pr,n_iter0
+integer ::  change  ! change is the flag of MC, 1 for accepte the move.
+integer :: dt(8) 
+	
+DOUBLE PRECISION :: alpha, beta, phi,new(3), z, theta,px,py,pz
+DOUBLE PRECISION :: angle, bond_l
+DOUBLE PRECISION ::  scal,random
+logical alive,check,exists
+
+! initialize mpi envirnoment
+# if defined (MPI)
+
+! initialize the mpi execution environment
+     call mp_init()
+
+! determines the rank of the calling process in the communicator
+     call mp_comm_rank(myid)
+
+! determines the size of the group associated with a communicator
+     call mp_comm_size(nprocs)
+
+# endif  /* MPI */
+
+
+
+
+ call date_and_time(values=dt)
+ seed=(dt(8)-500)*54321*myid + 11223344
+
+ random=ran2(seed)
+ random=ran2(seed)
+ random=ran2(seed)
+ 
+  if(myid==master) then
+       call cpu_time(start)
+         exists = .false.
+
+         inquire (file = 'input.txt', exist = exists)
+
+! read in parameters, default setting should be overrided
+         if ( exists .eqv. .true. ) then
+      open(unit=mytmp,file='input.txt')
+
+read(mytmp,*) Loa             ! L/a
+read(mytmp,*) lambda          ! mixing parameter
+read(mytmp,*) Nm              ! number of bonds
+read(mytmp,*) NMCs            ! number of conformations  
+read(mytmp,*) Nz              ! number of points in z direction
+read(mytmp,*) Ntheta          ! number of points in theta direction 
+read(mytmp,*) Nphi          ! number of points in phi direction 
+read(mytmp,*) Npre            ! number of prerotated   
+read(mytmp,*) Nmove           ! number of move in a MC step 
+read(mytmp,*) Max_iter        ! Max of iterations
+!read(mytmp,*) num             !defined as 1 if only pivot is used
+read(mytmp,*) pivota             !pivot percentage
+read(mytmp,*) smalla             !small roatae percentage = smalla-pivota
+read(mytmp,*) w_init          !integer varibale,0 for no initial field,1 for an initial field
+read(mytmp,*) rotate          !the limitation of the random move angle 
+read(mytmp,*) nu              ! interaction parameter
+read(mytmp,*) Lz              ! the size of the slab
+close(mytmp)
+
+
+
+      else 
+      write(mystd,*) "input file missing ,program stop!"
+      stop
+      endif
+endif  !endif myid==master
+
+
+! since input parameters may be updated in master node, it is important
+! to broadcast input parameters from root to all children processes
+
+# if defined (MPI)
+
+!------------------------------------------------------------------------+
+  !using the so called function overload scheme in the sofware engineering,we have the
+  !uniform subroutine mp_bcast for every type of data we want to bcast
+      call mp_bcast( Loa, master )                                     !
+                                          !
+      call mp_bcast( lambda , master )                                     !
+      call mp_bcast( Nm , master )   
+      call mp_bcast( NMCs , master ) 
+      call mp_bcast( Nz , master ) 
+      call mp_bcast( Ntheta, master ) 
+      call mp_bcast( Nphi, master ) 
+      call mp_bcast( Npre , master )   
+      call mp_bcast( Nmove , master )  
+      call mp_bcast( Max_iter , master )  
+      !call mp_bcast( num , master )  
+      call mp_bcast( pivota , master )  
+      call mp_bcast( smalla , master )  
+      call mp_bcast( rotate , master ) 
+      call mp_bcast( w_init , master ) 
+      call mp_bcast( nu , master ) 
+      call mp_bcast( Lz , master )                                !
+!^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^+
+     call mp_barrier()
+
+
+# endif  /* MPI */
+
+
+
+
+
+
+epsilon = 1.0d0*Nm/(4.0d0*Loa)    ! compute bending coefficent of chain
+dtheta = pi / Ntheta
+dphi=2*pi/Nphi
+
+deltaS=1.0d0*Loa/Nm
+
+
+
+
+allocate(polymer_A(0:Nm),w(1:Ntheta,1:Nphi,1:Nz), w_new(1:Ntheta,1:Nphi,1:Nz))
+!note that the the polymer chain is grafted on the surface ,thus the first index of izA,.. 
+!is integer 1 instead of 0,remember that when dealing with different problem!!!!!
+allocate( dz(1:nz), phi_z(1:nz),phi_ztot(1:nz), izA(1:Nm), iTA(1:Nm),iPA(1:Nm) )
+allocate(u_index(0:Nm),i_rotate(0:Nm))
+allocate(  phi_zA(1:nz),phi_zAtot(1:nz) )
+allocate(wtotmpi(1:Ntheta,1:Nphi,1:Nz))
+allocate(densitytotmpi(1:Nz,1:Nphi,1:Ntheta))
+allocate( gzA(1:nz),gzAtot(1:nz) )
+allocate(cosa1(1:Ntheta),sina1(1:Ntheta),cosa2(0:Nphi/2))
+allocate( sinegmma_matrix(1:Ntheta,1:Ntheta,0:Nphi/2) )
+allocate( density_index(1:Nz,1:Nphi,1:Ntheta) )
+allocate( density(1:Nz,1:Nphi,1:Ntheta) )
+allocate( Etot(1:Npre) )
+allocate( uu(1:Nm) )
+allocate( uu_tot(1:Nm) )
+allocate( P_theta(1:Ntheta) )
+allocate( P_phi(1:Nphi) )
+allocate( hisgphi(1:Nphi) )
+allocate( hisgtheta(1:Ntheta) )
+allocate( hisgphi_tot(1:Nphi) )
+allocate( hisgtheta_tot(1:Ntheta) )
+
+write(*,*) "epsilon=",epsilon
+write(*,*) "Ntheta,Nphi,Nz",Ntheta,Nphi,Nz
+w = 0
+w_new = 0
+wtotmpi= 0
+
+    
+
+do i = 1, Nz
+    !set kuhn length a as unit length,thus the z axis length is N=Loa 
+    dz(i) = fn(1.0d0*i/Nz)*Lz - fn(1.0d0*(i-1)/Nz)*Lz
+
+    !if(fn(1.0d0*i/Nz)*Lz<dep*Lz)then
+     ! uz(i)=-1.0d0*Ur
+    !else
+     ! uz(i)=0.0
+    !endif
+
+
+end do
+
+ write(*,*) "myid,seed,ran2(seed)", myid, seed ,ran2(seed)
+ 
+            
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!    initialize
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!a
+
+
+        
+      call  cos_sin(sinegmma_matrix,Ntheta,Nphi,dtheta,dphi,deltaS,dz(1))
+    ! open(unit=33,file='cosa.txt',status='old')
+     ! do i=1,Ntheta
+      !    read(33,*) cosa1(i)
+     ! enddo
+      !do i=1,Ntheta
+       !   read(33,*) sina1(i)
+      !enddo
+      !do i=0,Nphi-1
+       !   read(33,*) cosa2(i)
+      !enddo
+      !close(33)
+
+
+ inquire(file='init_config.txt',exist=alive)
+   if(alive) then
+ open(unit=42,file='init_config.txt',status='old')
+  do j=0,Nm
+ read(42,*) polymer_A(j)%x,polymer_A(j)%y,polymer_A(j)%z
+ enddo
+ close(42)
+   
+    call config2grid(polymer_A,iTA,iPA,izA) 
+
+ else 
+
+
+
+        check=.true.
+  do while(check)
+      polymer_A(0)%x = 0
+      polymer_A(0)%y = 0
+      polymer_A(0)%z = 0
+
+!
+  do j = 1, Nm
+      
+    !alpha = ran2(seed)                          ! generate cos (theta)\in(0,1)
+    alpha = ran2(seed)*min((Lz/(1.0*Loa)),1.0)                         ! generate cos (theta)\in(0,1)
+    beta = 2*ran2(seed)*pi                         ! generate angle of phi
+    new(1) = dsqrt(1-alpha*alpha)*dsin(beta)
+    new(2) = dsqrt(1-alpha*alpha)*dcos(beta)
+    new(3) = alpha            
+    bond_l = dsqrt(new(1)**2 + new(2)**2 + new(3)**2)
+
+    polymer_A(j)%x = polymer_A(j-1)%x + new(1)/bond_l 
+    polymer_A(j)%y = polymer_A(j-1)%y + new(2)/bond_l 
+    polymer_A(j)%z = polymer_A(j-1)%z + new(3)/bond_l 
+     if(polymer_A(j)%z<0.0.or.polymer_A(j)%z>(Lz/Loa)*Nm) then
+      check=.true.
+      exit
+      endif
+
+     theta = Dacos(alpha)
+     phi=beta 
+    z = 0.5d0 * ( polymer_A(j)%z + polymer_A(j-1)%z )
+    z=(Loa*1.0d0/Nm)*z
+
+    izA(j) = min(floor((z/Lz)*Nz) + 1,Nz)! is there any chance that floor()=Nz,that
+   ! could cause an error.maybe,floor(i_fn(z/Nm)*Nz-0.0000001)+1?
+      iPA(j)=min(floor(phi/dphi)+1,Nphi)
+    if (new(3) == -1) then             
+        iTA(j) = Ntheta                          
+    else    
+        iTA(j) = min(floor( theta/ dtheta ) + 1,Ntheta)
+    end if
+      check=.false.
+  end do
+
+
+enddo
+       
+
+endif  !endif inquire....
+
+call checkpolymer (flag_c,polymer_A)
+
+E_total = 0
+do i = 1, Nm-1
+    E_total = E_total &
+            + (polymer_A(i+1)%x - 2*polymer_A(i)%x + polymer_A(i-1)%x)**2   &
+            + (polymer_A(i+1)%y - 2*polymer_A(i)%y + polymer_A(i-1)%y)**2   &  
+            + (polymer_A(i+1)%z - 2*polymer_A(i)%z + polymer_A(i-1)%z)**2
+end do
+E_total = E_total*epsilon
+
+ 
+  if(myid==master.and.w_init==1) then
+ inquire(file='wfield.txt',exist=alive) 
+   if(alive) then                          
+ open(unit=42,file='wfield.txt',status='old')
+ do j=1,Nz
+     do k=1,Nphi
+        do i=1,Ntheta
+        read(42,*) NN,w(i,k,j)
+       enddo
+     enddo
+ enddo
+
+  close(42)
+  endif
+ else if(myid==master.and.w_init==0) then
+ do j=1,Nz
+     do k=1,Nphi
+         !!!when k in (0,0.5*pi) or (1.5*pi,2*pi) 
+         ! then field is a little weaker so we may have 
+         !an prefered /phi direction
+        if(k<floor(Nphi*0.25).or.k>floor(Nphi*0.75)) then
+          do i=1,Ntheta
+
+           w(i,k,j)=-0.05*cos(k*dphi)
+          enddo
+        else 
+          do i=1,Ntheta
+        !w(i,k,j)=0.0
+           w(i,k,j)=0.05*cos(k*dphi)
+          enddo
+        endif
+
+     enddo
+ enddo
+
+
+
+
+ endif 
+
+# if defined (MPI)
+
+!------------------------------------------------------------------------+
+  !using the so called function overload scheme in the sofware engineering,we have the
+  !uniform subroutine mp_bcast for every type of data we want to bcast
+                                          !
+      call mp_bcast( w , master )                                     !
+
+     call mp_barrier()
+
+
+# endif  /* MPI */
+
+
+
+
+do i = 1, Nm
+    E_total = E_total+deltaS*w(iTA(i),iPA(i),izA(i))
+end do
+
+write(*,*) "CREATED OK on",myid 
+write(*,*) "polymerinitEnergy:",E_total,"on",myid 
+ 
+res0=achar(48+myid)
+
+open(unit=13,file= res0 // 'A.pdb')
+do i = 0, Nm
+    write(13,"(A4,27X,F7.3,1X,F7.3,1X,F7.3)") "ATOM",polymer_A(i)%x,polymer_A(i)%y,polymer_A(i)%z 
+end do
+close(13) 
+
+
+
+     
+end subroutine initialize
