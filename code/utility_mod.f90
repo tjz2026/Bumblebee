@@ -493,7 +493,7 @@ end subroutine checkpolymer
              !write(*,*) "NInt(a),floor",nint(a),floor(a)
              end  subroutine PBC_swift
 
-              subroutine config2grid(polymer,iT,iP,iz)
+              subroutine config2grid(polymer,iz,iT,iP)
               use global_parameters
               implicit none
               Integer :: iz(1:Nm), iT(1:Nm),iP(1:Nm)
@@ -512,14 +512,8 @@ end subroutine checkpolymer
                
                iz(i) = min(floor(i_fn(z/Lz)*Nz) + 1,Nz)
 
-               !if(iz(i)==Nz+1) then 
-              ! iz(i)=Nz
-              ! endif
 
                iP(i)=min(floor(phi/dphi)+1,Nphi)
-               !if(iP(i)==Nphi+1) then 
-              ! iP(i)=Nphi       
-              ! endif         
 
            if (abs(polymer(i)%z - polymer(i-1)%z+1.0)<=0.000001d0) then
              iT(i) = Ntheta

@@ -166,14 +166,13 @@ allocate(  P2A_bond(1:Nm) )
 allocate(polymer_A(0:Nm),w(1:Ntheta,0:Nz), w_new(1:Ntheta,0:Nz))
 !note that the the polymer chain is grafted on the surface ,thus the first index of izA,.. 
 !is integer 1 instead of 0,remember that when dealing with different problem!!!!!
-allocate( dz(0:nz), phi_z(0:nz),phi_ztot(0:nz), izA(1:Nm), iTA(1:Nm) )
+allocate( dz(0:nz), phi_z(0:nz),phi_ztot(0:nz), izA(1:Nm), iTA(1:Nm),iPA(1:Nm) )
 allocate(u_index(0:Nm),i_rotate(0:Nm))
 allocate(  phi_zA(0:nz),phi_zAtot(0:nz) )
 allocate(wtotmpi(1:Ntheta,0:Nz))
 allocate(densitytotmpi(0:Nz,1:Ntheta))
 allocate( gzA(0:nz),gzAtot(0:nz) )
 allocate(cosa1(1:Ntheta),sina1(1:Ntheta),cosa2(0:Nphi/2))
-allocate( sinegmma_matrix(1:Ntheta,1:Ntheta,0:Nphi/2) )
 allocate( v_tt(1:Ntheta,1:Ntheta) )
 allocate( density_index(0:Nz,1:Ntheta) )
 allocate( density(0:Nz,1:Ntheta) )
@@ -218,11 +217,9 @@ end do
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!a
         
 # if defined (PHI)
-      call  cos_sin(sinegmma_matrix,Ntheta,Nphi,dtheta,dphi,deltaS,dz(1))
+      call  cos_sin(sinegmma_matrix,Ntheta,Nphi,dtheta,dphi,dz(1))
 # else /* PHI */
-      call  cos_sin(sinegmma_matrix,Ntheta,Nphi,dtheta,dphi,deltaS,dz(1))
-      call v_tt_init(Ntheta)
-
+      call v_tt_init(v_tt,Ntheta,dtheta,dz)
 # endif /* PHI */
 
 res0=achar(48+myid)
@@ -235,11 +232,8 @@ res0=achar(48+myid)
  enddo
  close(42)
    
-    call config2grid(polymer_A,iTA,iPA,izA) 
-
+    call config2grid(polymer_A,izA,iTA,iPA) 
  else 
-
-
 
         check=.true.
   do while(check)
@@ -247,23 +241,15 @@ res0=achar(48+myid)
       polymer_A(0)%y = 0
       polymer_A(0)%z = 0
 
-!
-  
-
-
-
   do j = 1, Nm
-     
-
-    if(j==1) then 
-    
-    alpha = 0.9999999d0                         ! generate cos (theta)\in(0,1)
-    beta = 0.0d0 
-    else                        ! generate angle of phi
-    !alpha = ran2(seed)                          ! generate cos (theta)\in(0,1)
-    alpha = ran2(seed)*min((Lz/(1.0*Loa)),1.0)                         ! generate cos (theta)\in(0,1)
+    if(j<=N_i .or. j>=N_i+2) then
+    alpha = ran2(seed)*min((Lz/(1.0*Loa)),1.0)     ! generate cos (theta)\in(0,1)
     beta = 2*ran2(seed)*pi                         ! generate angle of phi
+    else
+
     endif
+
+
     new(1) = dsqrt(1-alpha*alpha)*dsin(beta)
     new(2) = dsqrt(1-alpha*alpha)*dcos(beta)
     new(3) = alpha            
@@ -282,12 +268,9 @@ res0=achar(48+myid)
     z = 0.5d0 * ( polymer_A(j)%z + polymer_A(j-1)%z )
     z=(Loa*1.0d0/Nm)*z
 
-    !izA(j) = min(floor((z/Lz)*Nz) + 1,Nz)! is there any chance that floor()=Nz,that
     izA(j) = min(floor((z*Lz_inv)*Nz) + 1,Nz)! is there any chance that floor()=Nz,that
-    P_z(j)=1.0-(z_i(izA(j))-z)*dz_inv
+    !P_z(j)=1.0-(z_i(izA(j))-z)*dz_inv
 
-   ! could cause an error.maybe,floor(i_fn(z/Nm)*Nz-0.0000001)+1?
-      !iPA(j)=min(floor(phi/dphi)+1,Nphi)
       iPA(j)=min(floor(phi*dphi_inv)+1,Nphi)
     if (new(3) == -1) then             
         iTA(j) = Ntheta                          
@@ -370,8 +353,6 @@ write(*,*) "w(10,10,10)=",w(10,10,10),"on",myid
 # endif  /* MPI */
 
 
-
-
 do i = 1, Nm
     E_total =E_total+deltaS*(P_z(i)*w(iTA(i),iPA(i),izA(i))+(1.0-P_z(i))*w(iTA(i),iPA(i),izA(i)-1))
 end do
@@ -381,13 +362,4 @@ write(*,*) "polymerinitEnergy:",E_total,"on",myid
  
 res0=achar(48+myid)
 
-!open(unit=13,file= res0 // 'A.pdb')
-!do i = 0, Nm
- !   write(13,"(A4,27X,F7.3,1X,F7.3,1X,F7.3)") "ATOM",polymer_A(i)%x,polymer_A(i)%y,polymer_A(i)%z 
-!end do
-!close(13) 
-
-
-
-     
 end subroutine initialize
